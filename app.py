@@ -20,6 +20,23 @@ st.write(os.listdir(DEFAULT_MODELS_DIR))
 st.write("Contenido data:")
 st.write(os.listdir(DEFAULT_DATA_DIR))
 
+BASE_DIR = Path(__file__).resolve().parent
+DEFAULT_MODELS_DIR = BASE_DIR / "models"
+DEFAULT_DATA_DIR = BASE_DIR / "data"
+
+st.write("BASE_DIR:", BASE_DIR)
+st.write("MODELS_DIR:", DEFAULT_MODELS_DIR)
+st.write("DATA_DIR:", DEFAULT_DATA_DIR)
+
+import os
+
+st.write("Contenido models:")
+st.write(os.listdir(str(DEFAULT_MODELS_DIR)))
+
+st.write("Contenido data:")
+st.write(os.listdir(str(DEFAULT_DATA_DIR)))
+
+
 import os
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
