@@ -57,6 +57,20 @@ st.markdown(
             font-size: 0.8rem;
             margin-right: 0.35rem;
         }
+        div[data-testid="stButton"] > button,
+        div[data-testid="stDownloadButton"] > button {
+            background-color: #2563eb !important;
+            color: white !important;
+            border: 1px solid #1d4ed8 !important;
+            border-radius: 10px !important;
+            box-shadow: none !important;
+        }
+        div[data-testid="stButton"] > button:hover,
+        div[data-testid="stDownloadButton"] > button:hover {
+            background-color: #1d4ed8 !important;
+            color: white !important;
+            border: 1px solid #1e40af !important;
+        }
     </style>
     """,
     unsafe_allow_html=True,
@@ -482,6 +496,10 @@ if "csv_issues" not in st.session_state:
     st.session_state["csv_issues"] = []
 if "model_results" not in st.session_state:
     st.session_state["model_results"] = {}
+if "supervised_compare" not in st.session_state:
+    st.session_state["supervised_compare"] = None
+if "supervised_merged" not in st.session_state:
+    st.session_state["supervised_merged"] = None
 
 
 # ==========================================================
@@ -605,7 +623,7 @@ with tab3:
             <span class="badge">CSV o manual</span>
             <p style="margin-top:0.8rem; margin-bottom:0;">
                 Esta pestaña trabaja solo con los modelos supervisados.
-                Aquí se dejan las gráficas de los tres modelos de regresión/clasificación y sus comparaciones.
+                Aquí se dejan los resultados de predicción; la comparación visual se muestra en Hallazgos.
             </p>
         </div>
         """,
@@ -666,7 +684,6 @@ with tab3:
             st.dataframe(x_in.head(20), use_container_width=True)
 
             results_frames = []
-            supervised_outputs = {}
 
             for model_name in selected_models:
                 st.markdown(f"### {model_name}")
@@ -690,11 +707,6 @@ with tab3:
                 )
 
                 results_frames.append(out)
-                supervised_outputs[model_name] = {
-                    "preds": preds,
-                    "probs": probs,
-                    "clinical_pred": clinical_pred,
-                }
 
                 c1, c2, c3 = st.columns(3)
                 c1.metric("Tiene diagnóstico", int(np.sum(clinical_pred == 1)))
@@ -702,49 +714,6 @@ with tab3:
                 c3.metric("Probabilidad media", f"{np.mean(probs):.3f}" if probs is not None else "N/A")
 
                 st.dataframe(out.head(50), use_container_width=True)
-
-                summary = pd.DataFrame({
-                    "Resultado clínico": ["Tiene diagnóstico", "No tiene diagnóstico"],
-                    "Cantidad": [int(np.sum(clinical_pred == 1)), int(np.sum(clinical_pred == 0))],
-                })
-                fig_summary = px.bar(summary, x="Resultado clínico", y="Cantidad", title=f"Resumen clínico - {model_name}")
-                st.plotly_chart(fig_summary, use_container_width=True)
-
-                if probs is not None:
-                    fig_prob = px.histogram(
-                        pd.DataFrame({"Probabilidad": probs}),
-                        x="Probabilidad",
-                        nbins=20,
-                        title=f"Distribución de probabilidades - {model_name}",
-                    )
-                    st.plotly_chart(fig_prob, use_container_width=True)
-
-                if "Random Forest" in model_name:
-                    imp = get_rf_importance(model_obj, EXPECTED_FEATURES)
-                    if imp is not None:
-                        fig_imp = px.bar(
-                            imp.head(15).iloc[::-1],
-                            x="importance",
-                            y="feature",
-                            orientation="h",
-                            title=f"Importancia de variables - {model_name}",
-                        )
-                        st.plotly_chart(fig_imp, use_container_width=True)
-
-                if model_name == "Regresión logística":
-                    coef = get_lr_coefficients(model_obj)
-                    if coef is not None:
-                        top = coef.sort_values("abs_coef", ascending=False).head(15).copy()
-                        top["direction"] = np.where(top["coef"] >= 0, "Positivo", "Negativo")
-                        fig_coef = px.bar(
-                            top.iloc[::-1],
-                            x="coef",
-                            y="feature",
-                            orientation="h",
-                            color="direction",
-                            title="Coeficientes más relevantes - Regresión logística",
-                        )
-                        st.plotly_chart(fig_coef, use_container_width=True)
 
                 st.session_state["model_results"][model_name] = {
                     "kind": "supervised",
@@ -757,7 +726,6 @@ with tab3:
 
             if len(results_frames) > 0:
                 merged = pd.concat(results_frames, axis=1)
-                st.markdown("#### Comparación entre los tres modelos")
 
                 compare_rows = []
                 for model_name in selected_models:
@@ -772,17 +740,8 @@ with tab3:
                     })
 
                 compare = pd.DataFrame(compare_rows)
-                st.dataframe(compare, use_container_width=True, hide_index=True)
-
-                fig_cmp = px.bar(
-                    compare.melt(id_vars="Modelo", var_name="Métrica", value_name="Valor"),
-                    x="Modelo",
-                    y="Valor",
-                    color="Métrica",
-                    barmode="group",
-                    title="Comparación de los tres modelos supervisados",
-                )
-                st.plotly_chart(fig_cmp, use_container_width=True)
+                st.session_state["supervised_compare"] = compare
+                st.session_state["supervised_merged"] = merged
 
                 st.markdown("#### Descarga de resultados")
                 st.download_button(
@@ -877,7 +836,7 @@ with tab4:
 
 
 # ==========================================================
-# TAB 5: Hallazgos (solo tablas y listas)
+# TAB 5: Hallazgos
 # ==========================================================
 with tab5:
     st.subheader("Hallazgos más relevantes")
@@ -889,7 +848,8 @@ with tab5:
             <span class="badge">Tablas</span>
             <span class="badge">Listas</span>
             <p style="margin-top:0.8rem; margin-bottom:0;">
-                En esta pestaña se dejan solo tablas y listas, sin gráficas. Sirve como resumen ejecutivo.
+                En esta pestaña se concentran las tablas y las gráficas resumen: la comparación de los tres modelos
+                y la distribución de los grupos del clustering.
             </p>
         </div>
         """,
@@ -962,6 +922,37 @@ with tab5:
             })
 
     if supervised_available:
+        st.markdown("### Comparación entre los tres modelos")
+
+        compare = st.session_state.get("supervised_compare")
+        if compare is None or compare.empty:
+            compare_rows = []
+            for model_name, info in results.items():
+                if info.get("kind") != "supervised":
+                    continue
+                y_pred = info.get("clinical_pred", info.get("preds"))
+                y_prob = info.get("probs")
+                compare_rows.append({
+                    "Modelo": model_name,
+                    "Positivos predichos": int((pd.Series(y_pred) == 1).sum()),
+                    "Negativos predichos": int((pd.Series(y_pred) == 0).sum()),
+                    "Probabilidad media": float(np.mean(y_prob)) if y_prob is not None else np.nan,
+                })
+            compare = pd.DataFrame(compare_rows)
+
+        st.dataframe(compare, use_container_width=True, hide_index=True)
+
+        if len(compare) > 0:
+            fig_cmp = px.bar(
+                compare.melt(id_vars="Modelo", var_name="Métrica", value_name="Valor"),
+                x="Modelo",
+                y="Valor",
+                color="Métrica",
+                barmode="group",
+                title="Comparación de los tres modelos supervisados",
+            )
+            st.plotly_chart(fig_cmp, use_container_width=True)
+
         st.markdown("### Tabla de modelos supervisados")
         df_supervised = pd.DataFrame(supervised_rows)
         st.dataframe(
@@ -982,12 +973,8 @@ with tab5:
                 by=["Sensibilidad", "F1", "Especificidad", "Accuracy"],
                 ascending=False,
             ).iloc[0]
-            st.write(
-                f"- Mejor modelo por sensibilidad: **{best_row['Modelo']}**."
-            )
-            st.write(
-                f"- Balance general: F1 = **{best_row['F1']:.3f}** y especificidad = **{best_row['Especificidad']:.3f}**."
-            )
+            st.write(f"- Mejor modelo por sensibilidad: **{best_row['Modelo']}**.")
+            st.write(f"- Balance general: F1 = **{best_row['F1']:.3f}** y especificidad = **{best_row['Especificidad']:.3f}**.")
         else:
             st.write("- No existe diagnóstico real en el conjunto evaluado, así que solo se muestran predicciones clínicas.")
             st.write("- Para comparar con métricas reales, el archivo debe incluir la columna Diagnosis.")
@@ -995,9 +982,11 @@ with tab5:
         st.info("No se han ejecutado modelos supervisados todavía.")
 
     cluster_rows = []
+    cluster_labels_cache = {}
     for model_name, info in results.items():
         if info.get("kind") == "cluster":
             labels = info.get("labels")
+            cluster_labels_cache[model_name] = labels
             counts = pd.Series(labels).value_counts().sort_index()
             cluster_rows.append({
                 "Modelo": model_name,
@@ -1007,6 +996,23 @@ with tab5:
             })
 
     if len(cluster_rows) > 0:
+        st.markdown("### Distribución de grupos")
+        for model_name, labels in cluster_labels_cache.items():
+            st.markdown(f"#### {model_name}")
+            counts_series = pd.Series(labels).value_counts().sort_index()
+            cluster_df = pd.DataFrame({
+                "Cluster": counts_series.index.astype(str),
+                "Pacientes": counts_series.values,
+            })
+            fig_pie = px.pie(
+                cluster_df,
+                names="Cluster",
+                values="Pacientes",
+                title="Distribución de clusters",
+            )
+            st.plotly_chart(fig_pie, use_container_width=True)
+            st.dataframe(cluster_df, use_container_width=True)
+
         st.markdown("### Tabla de grupos")
         st.dataframe(pd.DataFrame(cluster_rows), use_container_width=True, hide_index=True)
 
