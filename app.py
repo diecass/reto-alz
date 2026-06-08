@@ -83,7 +83,7 @@ RANDOM_STATE = 42
 BASE_DIR = Path(__file__).resolve().parent
 
 # Si tu repo usa otra carpeta, cambia solo estos nombres.
-MODELS_SUBDIR = "models"
+MODELS_SUBDIR = ""
 DATA_SUBDIR = "data"
 
 DEFAULT_MODELS_DIR = BASE_DIR / MODELS_SUBDIR
