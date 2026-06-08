@@ -1,3 +1,14 @@
+from pathlib import Path
+import streamlit as st
+import os
+
+BASE_DIR = Path(__file__).resolve().parent
+
+st.write("Current working dir:", os.getcwd())
+st.write("BASE_DIR:", BASE_DIR)
+st.write("Existe models:", (BASE_DIR / "models").exists())
+st.write("Existe data:", (BASE_DIR / "data").exists())
+
 import os
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
@@ -12,8 +23,6 @@ from sklearn.decomposition import PCA
 
 st.write("Archivos encontrados:")
 
-for f in DEFAULT_MODELS_DIR.glob("*"):
-    st.write(f.name)
 
 
 st.set_page_config(
