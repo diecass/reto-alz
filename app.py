@@ -836,7 +836,7 @@ with tab4:
 
 
 # ==========================================================
-# TAB 5: Hallazgos
+# TAB 5: Hallazgos (solo tablas y listas)
 # ==========================================================
 with tab5:
     st.subheader("Hallazgos más relevantes")
@@ -848,8 +848,7 @@ with tab5:
             <span class="badge">Tablas</span>
             <span class="badge">Listas</span>
             <p style="margin-top:0.8rem; margin-bottom:0;">
-                En esta pestaña se concentran las tablas y las gráficas resumen: la comparación de los tres modelos
-                y la distribución de los grupos del clustering.
+                En esta pestaña se dejan solo tablas y listas, sin gráficas. Sirve como resumen ejecutivo.
             </p>
         </div>
         """,
@@ -922,37 +921,6 @@ with tab5:
             })
 
     if supervised_available:
-        st.markdown("### Comparación entre los tres modelos")
-
-        compare = st.session_state.get("supervised_compare")
-        if compare is None or compare.empty:
-            compare_rows = []
-            for model_name, info in results.items():
-                if info.get("kind") != "supervised":
-                    continue
-                y_pred = info.get("clinical_pred", info.get("preds"))
-                y_prob = info.get("probs")
-                compare_rows.append({
-                    "Modelo": model_name,
-                    "Positivos predichos": int((pd.Series(y_pred) == 1).sum()),
-                    "Negativos predichos": int((pd.Series(y_pred) == 0).sum()),
-                    "Probabilidad media": float(np.mean(y_prob)) if y_prob is not None else np.nan,
-                })
-            compare = pd.DataFrame(compare_rows)
-
-        st.dataframe(compare, use_container_width=True, hide_index=True)
-
-        if len(compare) > 0:
-            fig_cmp = px.bar(
-                compare.melt(id_vars="Modelo", var_name="Métrica", value_name="Valor"),
-                x="Modelo",
-                y="Valor",
-                color="Métrica",
-                barmode="group",
-                title="Comparación de los tres modelos supervisados",
-            )
-            st.plotly_chart(fig_cmp, use_container_width=True)
-
         st.markdown("### Tabla de modelos supervisados")
         df_supervised = pd.DataFrame(supervised_rows)
         st.dataframe(
@@ -973,8 +941,12 @@ with tab5:
                 by=["Sensibilidad", "F1", "Especificidad", "Accuracy"],
                 ascending=False,
             ).iloc[0]
-            st.write(f"- Mejor modelo por sensibilidad: **{best_row['Modelo']}**.")
-            st.write(f"- Balance general: F1 = **{best_row['F1']:.3f}** y especificidad = **{best_row['Especificidad']:.3f}**.")
+            st.write(
+                f"- Mejor modelo por sensibilidad: **{best_row['Modelo']}**."
+            )
+            st.write(
+                f"- Balance general: F1 = **{best_row['F1']:.3f}** y especificidad = **{best_row['Especificidad']:.3f}**."
+            )
         else:
             st.write("- No existe diagnóstico real en el conjunto evaluado, así que solo se muestran predicciones clínicas.")
             st.write("- Para comparar con métricas reales, el archivo debe incluir la columna Diagnosis.")
@@ -982,11 +954,9 @@ with tab5:
         st.info("No se han ejecutado modelos supervisados todavía.")
 
     cluster_rows = []
-    cluster_labels_cache = {}
     for model_name, info in results.items():
         if info.get("kind") == "cluster":
             labels = info.get("labels")
-            cluster_labels_cache[model_name] = labels
             counts = pd.Series(labels).value_counts().sort_index()
             cluster_rows.append({
                 "Modelo": model_name,
@@ -996,23 +966,6 @@ with tab5:
             })
 
     if len(cluster_rows) > 0:
-        st.markdown("### Distribución de grupos")
-        for model_name, labels in cluster_labels_cache.items():
-            st.markdown(f"#### {model_name}")
-            counts_series = pd.Series(labels).value_counts().sort_index()
-            cluster_df = pd.DataFrame({
-                "Cluster": counts_series.index.astype(str),
-                "Pacientes": counts_series.values,
-            })
-            fig_pie = px.pie(
-                cluster_df,
-                names="Cluster",
-                values="Pacientes",
-                title="Distribución de clusters",
-            )
-            st.plotly_chart(fig_pie, use_container_width=True)
-            st.dataframe(cluster_df, use_container_width=True)
-
         st.markdown("### Tabla de grupos")
         st.dataframe(pd.DataFrame(cluster_rows), use_container_width=True, hide_index=True)
 
