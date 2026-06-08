@@ -15,7 +15,7 @@ st.write("Contenido raíz:")
 st.write(os.listdir(BASE_DIR))
 
 st.write("Contenido models:")
-st.write(os.listdir(DEFAULT_MODELS_DIR))
+
 
 st.write("Contenido data:")
 st.write(os.listdir(DEFAULT_DATA_DIR))
@@ -23,6 +23,17 @@ st.write(os.listdir(DEFAULT_DATA_DIR))
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_MODELS_DIR = BASE_DIR / "models"
 DEFAULT_DATA_DIR = BASE_DIR / "data"
+
+import os
+
+st.write("BASE_DIR:", BASE_DIR)
+st.write("MODELS_DIR:", DEFAULT_MODELS_DIR)
+
+if DEFAULT_MODELS_DIR.exists():
+    st.write("Contenido models:")
+    st.write(os.listdir(DEFAULT_MODELS_DIR))
+else:
+    st.write("La carpeta models no existe")
 
 st.write("BASE_DIR:", BASE_DIR)
 st.write("MODELS_DIR:", DEFAULT_MODELS_DIR)
