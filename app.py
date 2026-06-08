@@ -1,24 +1,27 @@
-import os
+import traceback
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Optional, Tuple, Any
 
 import joblib
 import numpy as np
 import pandas as pd
-import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
+import streamlit as st
 from sklearn.decomposition import PCA
 from sklearn.metrics import (
-    confusion_matrix,
     accuracy_score,
+    confusion_matrix,
+    f1_score,
     precision_score,
     recall_score,
-    f1_score,
     roc_auc_score,
     roc_curve,
 )
 
+# ==========================================================
+# APP CONFIG
+# ==========================================================
 st.set_page_config(
     page_title="Alzheimer ML App",
     page_icon="🧠",
@@ -45,7 +48,6 @@ st.markdown(
             padding: 1rem 1rem;
             box-shadow: 0 6px 20px rgba(15, 23, 42, 0.05);
         }
-        .small-note {color: #64748b; font-size: 0.92rem;}
         .badge {
             display: inline-block;
             padding: 0.25rem 0.65rem;
@@ -61,13 +63,9 @@ st.markdown(
 )
 
 RANDOM_STATE = 42
-
-# ==========================================================
-# RUTAS PARA GITHUB / STREAMLIT CLOUD
-# ==========================================================
 BASE_DIR = Path(__file__).resolve().parent
 
-# Cambia aquí si en tu repo usas otra carpeta
+# Si tu repo usa otra carpeta, cambia solo estos nombres.
 MODELS_SUBDIR = "models"
 DATA_SUBDIR = "data"
 
@@ -94,7 +92,7 @@ BINARY_COLS = [
     "BehavioralProblems", "Confusion", "Disorientation", "PersonalityChanges",
     "DifficultyCompletingTasks", "Forgetfulness",
 ]
-INT_LIKE_COLS = ["Age", "EducationLevel", "SystolicBP", "DiastolicBP"] + BINARY_COLS + CATEGORICAL_COLS
+INT_LIKE_COLS = ["Age", "EducationLevel", "SystolicBP", "DiastolicBP"] + CATEGORICAL_COLS + BINARY_COLS
 
 MODEL_FILENAMES = {
     "Regresión logística": ["modelo_regresion_logistica_alzheimer.pkl"],
@@ -139,12 +137,11 @@ FEATURE_LABELS = {
 }
 
 # ==========================================================
-# UTILIDADES
+# HELPERS
 # ==========================================================
-
 def resolve_existing_path(*paths: Path) -> Optional[Path]:
     for p in paths:
-        if p.exists():
+        if p is not None and p.exists():
             return p
     return None
 
@@ -152,9 +149,12 @@ def resolve_existing_path(*paths: Path) -> Optional[Path]:
 @st.cache_data(show_spinner=False)
 def load_reference_dataset(data_path: str) -> Optional[pd.DataFrame]:
     p = Path(data_path)
-    if p.exists() and p.suffix.lower() in [".xlsx", ".xls", ".csv"]:
-        if p.suffix.lower() == ".csv":
-            return pd.read_csv(p)
+    if not p.exists():
+        return None
+
+    if p.suffix.lower() == ".csv":
+        return pd.read_csv(p)
+    if p.suffix.lower() in [".xlsx", ".xls"]:
         return pd.read_excel(p)
     return None
 
@@ -183,18 +183,9 @@ def coerce_numeric(series: pd.Series) -> pd.Series:
     return pd.to_numeric(series, errors="coerce")
 
 
-def load_models(models_dir: str) -> Dict[str, object]:
-    loaded = {}
-    for model_name, candidates in MODEL_FILENAMES.items():
-        path = find_model_file(models_dir, candidates)
-        if path is not None:
-            loaded[model_name] = load_joblib_obj(str(path))
-            loaded[f"{model_name}__path"] = str(path)
-    return loaded
+def build_schema_from_reference(df_ref: Optional[pd.DataFrame]) -> Dict[str, Dict[str, Any]]:
+    schema: Dict[str, Dict[str, Any]] = {}
 
-
-def build_schema_from_reference(df_ref: Optional[pd.DataFrame]) -> Dict[str, Dict]:
-    schema = {}
     if df_ref is None:
         mins_maxs = {
             "Age": (60, 90),
@@ -219,15 +210,24 @@ def build_schema_from_reference(df_ref: Optional[pd.DataFrame]) -> Dict[str, Dic
             elif c in BINARY_COLS:
                 schema[c] = {"type": "binary", "options": [0, 1]}
             elif c in INT_LIKE_COLS:
-                schema[c] = {"type": "int", "min": mins_maxs.get(c, (0, 100))[0], "max": mins_maxs.get(c, (0, 100))[1]}
+                schema[c] = {
+                    "type": "int",
+                    "min": mins_maxs.get(c, (0, 100))[0],
+                    "max": mins_maxs.get(c, (0, 100))[1],
+                }
             else:
-                schema[c] = {"type": "float", "min": mins_maxs.get(c, (0.0, 1.0))[0], "max": mins_maxs.get(c, (0.0, 1.0))[1]}
+                schema[c] = {
+                    "type": "float",
+                    "min": mins_maxs.get(c, (0.0, 1.0))[0],
+                    "max": mins_maxs.get(c, (0.0, 1.0))[1],
+                }
         return schema
 
     for c in EXPECTED_FEATURES:
         col = df_ref[c]
         if c in CATEGORICAL_COLS:
-            schema[c] = {"type": "categorical", "options": sorted([int(x) for x in col.dropna().unique().tolist()])}
+            opts = sorted([int(x) for x in col.dropna().unique().tolist()])
+            schema[c] = {"type": "categorical", "options": opts}
         elif c in BINARY_COLS:
             schema[c] = {"type": "binary", "options": [0, 1]}
         elif pd.api.types.is_integer_dtype(col):
@@ -237,18 +237,20 @@ def build_schema_from_reference(df_ref: Optional[pd.DataFrame]) -> Dict[str, Dic
     return schema
 
 
-def validate_and_prepare_csv(df_in: pd.DataFrame, schema: Dict[str, Dict]) -> Tuple[pd.DataFrame, pd.DataFrame, List[str]]:
+def validate_and_prepare_csv(df_in: pd.DataFrame, schema: Dict[str, Dict[str, Any]]) -> Tuple[pd.DataFrame, pd.DataFrame, List[str]]:
     df = normalize_columns(df_in)
-    issues = []
+    issues: List[str] = []
 
     missing = [c for c in EXPECTED_FEATURES if c not in df.columns]
     extra = [c for c in df.columns if c not in EXPECTED_FEATURES + IDENTIFIER_COLS + [OPTIONAL_TARGET]]
+
     if missing:
         issues.append(f"Faltan columnas requeridas: {missing}")
     if extra:
         issues.append(f"Columnas extra que se ignorarán: {extra}")
 
     out = pd.DataFrame(index=df.index)
+
     for c in EXPECTED_FEATURES:
         if c not in df.columns:
             out[c] = np.nan
@@ -260,14 +262,16 @@ def validate_and_prepare_csv(df_in: pd.DataFrame, schema: Dict[str, Dict]) -> Tu
         if spec["type"] in {"float", "int"}:
             s = coerce_numeric(s)
             if spec["type"] == "int":
-                bad = s.dropna()[~np.isclose(s.dropna() % 1, 0)]
-                if len(bad) > 0:
-                    issues.append(f"{c}: hay valores no enteros en filas {bad.index.tolist()[:10]}")
+                non_int = s.dropna()[~np.isclose(s.dropna() % 1, 0)]
+                if len(non_int) > 0:
+                    issues.append(f"{c}: hay valores no enteros en filas {non_int.index.tolist()[:10]}")
                 s = s.round(0)
+
             low, high = spec["min"], spec["max"]
             bad_range = s.dropna()[(s.dropna() < low) | (s.dropna() > high)]
             if len(bad_range) > 0:
                 issues.append(f"{c}: valores fuera de rango [{low}, {high}] en filas {bad_range.index.tolist()[:10]}")
+
             out[c] = s
         else:
             s = coerce_numeric(s)
@@ -282,6 +286,7 @@ def validate_and_prepare_csv(df_in: pd.DataFrame, schema: Dict[str, Dict]) -> Tu
 
     validity = pd.DataFrame(index=out.index)
     validity["row_valid"] = True
+
     for c in EXPECTED_FEATURES:
         spec = schema[c]
         validity[f"{c}_valid"] = out[c].notna()
@@ -289,18 +294,19 @@ def validate_and_prepare_csv(df_in: pd.DataFrame, schema: Dict[str, Dict]) -> Tu
             validity[f"{c}_valid"] &= (out[c].astype(float) >= spec["min"]) & (out[c].astype(float) <= spec["max"])
         else:
             validity[f"{c}_valid"] &= out[c].isin(spec["options"])
-    validity["row_valid"] = validity[[f"{c}_valid" for c in EXPECTED_FEATURES]].all(axis=1)
 
+    validity["row_valid"] = validity[[f"{c}_valid" for c in EXPECTED_FEATURES]].all(axis=1)
     return out, validity, issues
 
 
-def evaluate_binary_model(y_true, y_pred, y_prob=None):
+def safe_fit_metric(y_true, y_pred, y_prob=None):
     metrics = {
         "accuracy": accuracy_score(y_true, y_pred),
         "precision": precision_score(y_true, y_pred, zero_division=0),
         "recall": recall_score(y_true, y_pred, zero_division=0),
         "f1": f1_score(y_true, y_pred, zero_division=0),
     }
+
     if y_prob is not None:
         try:
             metrics["auc"] = roc_auc_score(y_true, y_prob)
@@ -311,32 +317,6 @@ def evaluate_binary_model(y_true, y_pred, y_prob=None):
 
     cm = confusion_matrix(y_true, y_pred)
     return metrics, cm
-
-
-def interpret_model(name, metrics, cm):
-    tn, fp, fn, tp = cm.ravel()
-
-    parts = [
-        f"**{name}**",
-        f"Accuracy: {metrics['accuracy']:.3f}, Precision: {metrics['precision']:.3f}, Sensibilidad/Recall: {metrics['recall']:.3f}, F1: {metrics['f1']:.3f}.",
-        f"Matriz de confusión: TN={tn}, FP={fp}, FN={fn}, TP={tp}."
-    ]
-
-    if metrics["precision"] > metrics["recall"]:
-        parts.append("El modelo es más estricto al predecir positivos: comete menos falsos positivos, pero puede dejar pasar algunos casos reales.")
-    elif metrics["recall"] > metrics["precision"]:
-        parts.append("El modelo detecta mejor los positivos reales: reduce falsos negativos, lo cual es útil cuando no conviene dejar pasar casos positivos.")
-    else:
-        parts.append("El balance entre precisión y sensibilidad es bastante parejo.")
-
-    if fn < fp:
-        parts.append("En este caso, los falsos negativos son menores que los falsos positivos, lo cual suele ser favorable en problemas médicos.")
-    elif fp < fn:
-        parts.append("Hay más falsos negativos que falsos positivos, así que convendría revisar si el modelo está dejando pasar casos positivos.")
-    else:
-        parts.append("Los errores positivos y negativos están equilibrados.")
-
-    return " ".join(parts)
 
 
 def plot_confusion_matrix_plotly(cm, title):
@@ -350,7 +330,7 @@ def plot_confusion_matrix_plotly(cm, title):
             y=["Real 0", "Real 1"],
             text=z,
             texttemplate="%{text}",
-            showscale=True
+            showscale=True,
         )
     )
     fig.update_layout(
@@ -358,7 +338,7 @@ def plot_confusion_matrix_plotly(cm, title):
         xaxis_title="Predicción",
         yaxis_title="Valor real",
         width=700,
-        height=500
+        height=500,
     )
     return fig
 
@@ -373,23 +353,14 @@ def to_model_input(df_prepared: pd.DataFrame) -> pd.DataFrame:
             x[c] = x[c].astype(float)
     return x
 
-# ==========================================================
-# PREDICCIÓN Y VISUALIZACIONES
-# ==========================================================
 
-def predict_supervised(model, x: pd.DataFrame) -> Tuple[np.ndarray, Optional[np.ndarray]]:
-    preds = model.predict(x)
-    probs = None
-    if hasattr(model, "predict_proba"):
-        probs = model.predict_proba(x)[:, 1]
-    return preds, probs
-
-
-def get_rf_importance(model, x_columns: List[str]) -> Optional[pd.DataFrame]:
+def get_rf_importance(model) -> Optional[pd.DataFrame]:
     try:
         feature_names = model.named_steps["preprocess"].get_feature_names_out()
         importances = model.named_steps["model"].feature_importances_
-        out = pd.DataFrame({"feature": feature_names, "importance": importances}).sort_values("importance", ascending=False)
+        out = pd.DataFrame(
+            {"feature": feature_names, "importance": importances}
+        ).sort_values("importance", ascending=False)
         return out
     except Exception:
         return None
@@ -401,10 +372,20 @@ def get_lr_coefficients(model) -> Optional[pd.DataFrame]:
         coef = model.named_steps["model"].coef_[0]
         out = pd.DataFrame({"feature": feature_names, "coef": coef})
         out["abs_coef"] = out["coef"].abs()
-        out = out.sort_values("abs_coef", ascending=False)
-        return out
+        return out.sort_values("abs_coef", ascending=False)
     except Exception:
         return None
+
+
+def predict_supervised(model, x: pd.DataFrame) -> Tuple[np.ndarray, Optional[np.ndarray]]:
+    preds = model.predict(x)
+    probs = None
+    if hasattr(model, "predict_proba"):
+        try:
+            probs = model.predict_proba(x)[:, 1]
+        except Exception:
+            probs = None
+    return preds, probs
 
 
 def predict_cluster(artifact, x: pd.DataFrame) -> Tuple[np.ndarray, pd.DataFrame]:
@@ -435,42 +416,77 @@ def predict_cluster(artifact, x: pd.DataFrame) -> Tuple[np.ndarray, pd.DataFrame
 
     raise ValueError("No se pudo interpretar el artefacto de clustering.")
 
+
+def load_models(models_dir: str) -> Dict[str, object]:
+    loaded: Dict[str, object] = {}
+    errors: Dict[str, str] = {}
+
+    for model_name, candidates in MODEL_FILENAMES.items():
+        path = find_model_file(models_dir, candidates)
+        if path is None:
+            errors[model_name] = "No se encontró el archivo .pkl"
+            continue
+
+        try:
+            loaded[model_name] = load_joblib_obj(str(path))
+            loaded[f"{model_name}__path"] = str(path)
+        except Exception as e:
+            errors[model_name] = f"{type(e).__name__}: {e}"
+
+    st.session_state["model_load_errors"] = errors
+    return loaded
+
+
 # ==========================================================
-# CONFIGURACIÓN
+# DEFAULT PATHS
 # ==========================================================
+ref_path_default = str(
+    resolve_existing_path(
+        DEFAULT_DATA_DIR / "alzheimer_dataset.xlsx",
+        DEFAULT_DATA_DIR / "alzheimer_dataset.csv",
+        BASE_DIR / "alzheimer_dataset.xlsx",
+        BASE_DIR / "alzheimer_dataset.csv",
+    ) or (DEFAULT_DATA_DIR / "alzheimer_dataset.xlsx")
+)
 
-ref_path_default = str(resolve_existing_path(
-    DEFAULT_DATA_DIR / "alzheimer_dataset.xlsx",
-    DEFAULT_DATA_DIR / "alzheimer_dataset.csv",
-    BASE_DIR / "alzheimer_dataset.xlsx",
-    BASE_DIR / "alzheimer_dataset.csv",
-) or (DEFAULT_DATA_DIR / "alzheimer_dataset.xlsx"))
+models_dir_default = str(
+    resolve_existing_path(
+        DEFAULT_MODELS_DIR,
+        BASE_DIR / "models",
+        BASE_DIR / "artifacts" / "models",
+    ) or DEFAULT_MODELS_DIR
+)
 
-models_dir_default = str(resolve_existing_path(
-    DEFAULT_MODELS_DIR,
-    BASE_DIR / "models",
-    BASE_DIR / "artifacts" / "models",
-) or DEFAULT_MODELS_DIR)
-
+# ==========================================================
+# SIDEBAR
+# ==========================================================
 with st.sidebar:
     st.markdown("## ⚙️ Configuración")
+
     models_dir = st.text_input("Carpeta de modelos", models_dir_default)
     reference_data_path = st.text_input("Dataset de referencia", ref_path_default)
     st.caption("Se usa para validar columnas, tipos y rangos.")
+
+    if st.button("Recargar modelos"):
+        st.cache_resource.clear()
+        st.rerun()
 
     st.markdown("### Modelos disponibles")
     st.write("- Regresión logística")
     st.write("- Random Forest (2 versiones)")
     st.write("- Clustering (KMeans)")
 
+# ==========================================================
+# LOAD DATA / MODELS
+# ==========================================================
 reference_df = load_reference_dataset(reference_data_path)
 schema = build_schema_from_reference(reference_df)
 models = load_models(models_dir)
+model_load_errors = st.session_state.get("model_load_errors", {})
 
 # ==========================================================
-# INTERFAZ PRINCIPAL
+# HEADER
 # ==========================================================
-
 st.markdown(
     """
     <div class="hero">
@@ -502,7 +518,8 @@ missing_models = [
         "Random Forest - GridSearch (pocos datos)",
         "Random Forest - RandomizedSearch (más datos)",
         "Clustering",
-    ] if m not in models
+    ]
+    if m not in models
 ]
 
 if missing_models:
@@ -510,7 +527,14 @@ if missing_models:
 else:
     st.success("✅ Todos los modelos cargados correctamente")
 
-# Estado de sesión
+if model_load_errors:
+    with st.expander("Ver errores de carga de modelos"):
+        for model_name, err in model_load_errors.items():
+            st.write(f"**{model_name}**: {err}")
+
+# ==========================================================
+# SESSION STATE
+# ==========================================================
 if "uploaded_df" not in st.session_state:
     st.session_state["uploaded_df"] = None
 if "manual_df" not in st.session_state:
@@ -521,7 +545,12 @@ if "csv_issues" not in st.session_state:
     st.session_state["csv_issues"] = []
 if "model_results" not in st.session_state:
     st.session_state["model_results"] = {}
+if "prediction_output" not in st.session_state:
+    st.session_state["prediction_output"] = None
 
+# ==========================================================
+# TABS
+# ==========================================================
 tab1, tab2, tab3, tab4 = st.tabs([
     "📁 Cargar CSV",
     "✍️ Captura manual",
@@ -540,6 +569,7 @@ with tab1:
         try:
             df_raw = pd.read_csv(uploaded)
             st.session_state["uploaded_df"] = df_raw
+
             prepared, validity, issues = validate_and_prepare_csv(df_raw, schema)
             st.session_state["validated_csv"] = prepared
             st.session_state["csv_issues"] = issues
@@ -556,11 +586,12 @@ with tab1:
 
             valid_rate = validity["row_valid"].mean() * 100
             st.metric("Filas válidas", f"{valid_rate:.1f}%")
+
         except Exception as e:
             st.error(f"❌ Error al leer CSV: {e}")
 
 # ==========================================================
-# TAB 2: CAPTURA MANUAL
+# TAB 2: MANUAL
 # ==========================================================
 with tab2:
     st.subheader("Captura manual de registro")
@@ -577,14 +608,15 @@ with tab2:
 
             if spec["type"] in {"binary", "categorical"}:
                 opts = spec["options"]
-                record[feature] = c.selectbox(label, opts)
+                record[feature] = c.selectbox(label, opts, key=f"manual_{feature}")
             elif spec["type"] == "int":
                 mn, mx = int(spec["min"]), int(spec["max"])
-                record[feature] = c.number_input(label, min_value=mn, max_value=mx, value=mn, step=1)
+                record[feature] = c.number_input(label, min_value=mn, max_value=mx, value=mn, step=1, key=f"manual_{feature}")
             else:
                 mn, mx = float(spec["min"]), float(spec["max"])
                 step = (mx - mn) / 100.0 if mx > mn else 0.1
-                record[feature] = c.number_input(label, min_value=mn, max_value=mx, value=mn, step=step)
+                record[feature] = c.number_input(label, min_value=mn, max_value=mx, value=mn, step=step, key=f"manual_{feature}")
+
             idx += 1
 
         submitted = st.form_submit_button("Agregar registro", use_container_width=True)
@@ -597,6 +629,7 @@ with tab2:
     st.markdown("#### Registros almacenados")
     if len(st.session_state["manual_df"]) > 0:
         st.dataframe(st.session_state["manual_df"], use_container_width=True)
+
         if st.button("Limpiar registros"):
             st.session_state["manual_df"] = pd.DataFrame(columns=EXPECTED_FEATURES)
             st.rerun()
@@ -686,13 +719,17 @@ with tab3:
             st.success(f"✅ Datos listos: {x_in.shape[0]:,} filas × {x_in.shape[1]:,} variables")
             st.dataframe(x_in.head(20), use_container_width=True)
 
-            results_frames = []
+            # Output agregado sin duplicar columnas base
+            results_df = x_in.copy()
+            st.session_state["model_results"] = {}
 
             for model_name in selected_models:
                 st.markdown(f"### {model_name}")
                 model_obj = models[model_name]
 
+                # -----------------------------
                 # MODELOS SUPERVISADOS
+                # -----------------------------
                 if model_name in [
                     "Regresión logística",
                     "Random Forest - GridSearch (pocos datos)",
@@ -705,29 +742,34 @@ with tab3:
                     else:
                         clinical_pred = preds.copy()
 
-                    out = x_in.copy()
-                    out[f"Pred_{model_name}"] = preds
+                    pred_col = f"Pred_{model_name}"
+                    results_df[pred_col] = preds
 
                     if probs is not None:
-                        out[f"Prob_{model_name}"] = probs
+                        prob_col = f"Prob_{model_name}"
+                        results_df[prob_col] = probs
 
-                    out[f"Diagnóstico_clínico_{model_name}"] = np.where(
+                    clinical_col = f"Diagnóstico_clínico_{model_name}"
+                    results_df[clinical_col] = np.where(
                         clinical_pred == 1,
                         "Tiene diagnóstico",
                         "No tiene diagnóstico",
                     )
 
-                    results_frames.append(out)
-
                     c1, c2, c3 = st.columns(3)
                     c1.metric("Tiene diagnóstico", int(np.sum(clinical_pred == 1)))
                     c2.metric("No tiene diagnóstico", int(np.sum(clinical_pred == 0)))
-                    if probs is not None:
-                        c3.metric("Prob. media", f"{np.mean(probs):.3f}")
-                    else:
-                        c3.metric("Prob. media", "N/A")
+                    c3.metric("Prob. media", f"{np.mean(probs):.3f}" if probs is not None else "N/A")
 
-                    st.dataframe(out.head(50), use_container_width=True)
+                    preview_cols = [pred_col]
+                    if probs is not None:
+                        preview_cols.append(prob_col)
+                    preview_cols.append(clinical_col)
+
+                    st.dataframe(
+                        pd.concat([x_in.head(20), results_df[preview_cols].head(20)], axis=1),
+                        use_container_width=True,
+                    )
 
                     summary = pd.DataFrame({
                         "Resultado": ["Tiene diagnóstico", "No tiene diagnóstico"],
@@ -749,7 +791,7 @@ with tab3:
                         st.plotly_chart(fig, use_container_width=True)
 
                     if "Random Forest" in model_name:
-                        imp = get_rf_importance(model_obj, EXPECTED_FEATURES)
+                        imp = get_rf_importance(model_obj)
                         if imp is not None:
                             fig_imp = px.bar(
                                 imp.head(15).iloc[::-1],
@@ -783,19 +825,23 @@ with tab3:
                         "threshold": sensitivity_threshold,
                     }
 
+                # -----------------------------
                 # CLUSTERING
+                # -----------------------------
                 else:
                     labels, viz = predict_cluster(model_obj, x_in)
 
-                    out = x_in.copy()
-                    out["Cluster"] = labels
-                    results_frames.append(out)
+                    cluster_col = f"Cluster_{model_name}"
+                    results_df[cluster_col] = labels
 
                     c1, c2 = st.columns(2)
                     c1.metric("Clusters", int(pd.Series(labels).nunique()))
                     c2.metric("Cluster más frecuente", int(pd.Series(labels).mode().iloc[0]))
 
-                    st.dataframe(out.head(50), use_container_width=True)
+                    st.dataframe(
+                        pd.concat([x_in.head(20), results_df[[cluster_col]].head(20)], axis=1),
+                        use_container_width=True,
+                    )
 
                     counts = pd.Series(labels).value_counts().sort_index().reset_index()
                     counts.columns = ["Cluster", "Cantidad"]
@@ -818,16 +864,16 @@ with tab3:
                         "labels": labels,
                     }
 
-            if len(results_frames) > 0:
-                merged = pd.concat(results_frames, axis=1)
-                st.markdown("#### Descargar resultados")
-                st.download_button(
-                    "Descargar CSV",
-                    data=merged.to_csv(index=False).encode("utf-8"),
-                    file_name="predicciones_alzheimer.csv",
-                    mime="text/csv",
-                    use_container_width=True,
-                )
+            st.session_state["prediction_output"] = results_df
+
+            st.markdown("#### Descargar resultados")
+            st.download_button(
+                "Descargar CSV",
+                data=results_df.to_csv(index=False).encode("utf-8"),
+                file_name="predicciones_alzheimer.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
 
 # ==========================================================
 # TAB 4: HALLAZGOS
@@ -836,11 +882,14 @@ with tab4:
     st.subheader("Resumen de resultados")
 
     results = st.session_state.get("model_results", {})
+    output_df = st.session_state.get("prediction_output")
 
     if len(results) == 0:
         st.info("Ejecuta predicciones en la pestaña anterior para ver resultados.")
     else:
         st.success(f"✅ {len(results)} modelos ejecutados")
+
+        supervised_rows = []
 
         for model_name, info in results.items():
             st.markdown(f"### {model_name}")
@@ -851,6 +900,58 @@ with tab4:
                 c2.metric("Negativos", int(np.sum(info.get("clinical_pred") == 0)))
                 if info.get("probs") is not None:
                     c3.metric("Prob. media", f"{np.mean(info.get('probs')):.3f}")
+                else:
+                    c3.metric("Prob. media", "N/A")
+
+                # Métricas solo si existe Diagnosis real en el CSV validado
+                y_true = None
+                if (
+                    st.session_state.get("uploaded_df") is not None
+                    and st.session_state.get("validated_csv") is not None
+                    and OPTIONAL_TARGET in st.session_state["uploaded_df"].columns
+                    and len(st.session_state["uploaded_df"]) == len(st.session_state["validated_csv"])
+                ):
+                    y_true = (
+                        pd.to_numeric(st.session_state["uploaded_df"][OPTIONAL_TARGET], errors="coerce")
+                        .fillna(0)
+                        .astype(int)
+                        .values
+                    )
+
+                if y_true is not None and len(y_true) == len(info.get("clinical_pred")):
+                    metrics, cm = safe_fit_metric(y_true, info.get("clinical_pred"), info.get("probs"))
+                    supervised_rows.append({
+                        "Modelo": model_name,
+                        "Accuracy": metrics["accuracy"],
+                        "Precision": metrics["precision"],
+                        "Sensibilidad": metrics["recall"],
+                        "Especificidad": cm.ravel()[0] / (cm.ravel()[0] + cm.ravel()[1]) if (cm.ravel()[0] + cm.ravel()[1]) > 0 else 0.0,
+                        "F1": metrics["f1"],
+                        "AUC": metrics["auc"],
+                    })
+
+                    st.plotly_chart(
+                        plot_confusion_matrix_plotly(cm, f"Matriz de confusión - {model_name}"),
+                        use_container_width=True,
+                    )
+
+                    if info.get("probs") is not None:
+                        try:
+                            fpr, tpr, _ = roc_curve(y_true, info.get("probs"))
+                            roc_fig = go.Figure()
+                            roc_fig.add_trace(go.Scatter(x=fpr, y=tpr, mode="lines", name=model_name))
+                            roc_fig.add_trace(go.Scatter(x=[0, 1], y=[0, 1], mode="lines", name="Aleatorio", line=dict(dash="dash")))
+                            roc_fig.update_layout(title=f"Curva ROC - {model_name}", xaxis_title="FPR", yaxis_title="TPR")
+                            st.plotly_chart(roc_fig, use_container_width=True)
+                        except Exception:
+                            st.info("No se pudo generar la curva ROC con este conjunto de datos.")
+
+                    st.write(
+                        f"Accuracy={metrics['accuracy']:.3f}, Precision={metrics['precision']:.3f}, "
+                        f"Recall={metrics['recall']:.3f}, F1={metrics['f1']:.3f}."
+                    )
+                else:
+                    st.info("No existe una columna real de diagnóstico para este conjunto, así que solo se muestra el resultado predictivo.")
 
             elif info.get("kind") == "cluster":
                 labels = info.get("labels")
@@ -860,8 +961,45 @@ with tab4:
 
             st.markdown("---")
 
+        if supervised_rows:
+            st.markdown("### Comparación de modelos supervisados")
+            df_supervised = pd.DataFrame(supervised_rows)
+
+            df_supervised = df_supervised.sort_values(
+                by=["Sensibilidad", "F1", "Especificidad", "Accuracy"],
+                ascending=False,
+            )
+
+            st.dataframe(df_supervised, use_container_width=True, hide_index=True)
+
+            metric_cols = [c for c in ["Accuracy", "Precision", "Sensibilidad", "Especificidad", "F1", "AUC"] if c in df_supervised.columns]
+            plot_df = df_supervised.melt(id_vars="Modelo", value_vars=metric_cols, var_name="Métrica", value_name="Valor")
+
+            fig_metrics = px.bar(
+                plot_df,
+                x="Modelo",
+                y="Valor",
+                color="Métrica",
+                barmode="group",
+                title="Comparación de desempeño entre modelos supervisados",
+            )
+            st.plotly_chart(fig_metrics, use_container_width=True)
+
+            best_row = df_supervised.iloc[0]
+            st.success(
+                f"**Mejor modelo seleccionado: {best_row['Modelo']}**. "
+                f"Se eligió por tener la mayor sensibilidad, con F1={best_row['F1']:.3f}."
+            )
+
+        if output_df is not None:
+            st.markdown("### Vista rápida del archivo de salida")
+            st.dataframe(output_df.head(20), use_container_width=True)
+
+# ==========================================================
+# FOOTER
+# ==========================================================
 st.markdown("---")
 st.markdown("### 📚 Información")
 st.markdown(f"**Modelos cargados:** {len([k for k in models.keys() if not k.endswith('__path')])}/4")
 st.markdown(f"**Variables:** {len(EXPECTED_FEATURES)}")
-st.markdown(f"**Carpeta modelos actual:** `{models_dir}`")
+st.markdown(f"**Carpeta de modelos actual:** `{models_dir}`")
