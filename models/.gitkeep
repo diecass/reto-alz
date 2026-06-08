@@ -1,0 +1,7 @@
+# Carpeta para modelos entrenados (.pkl)
+
+Coloca aquí tus archivos de modelos:
+- modelo_regresion_logistica_alzheimer.pkl
+- modelo_random_forest_pocos_datos.pkl
+- modelo_random_forest_mas_datos.pkl
+- cluster_kmeans_full_model.pkl
