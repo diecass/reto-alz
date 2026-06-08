@@ -10,6 +10,17 @@ st.write("Existe models:", (BASE_DIR / "models").exists())
 st.write("Existe data:", (BASE_DIR / "data").exists())
 
 import os
+
+st.write("Contenido raíz:")
+st.write(os.listdir(BASE_DIR))
+
+st.write("Contenido models:")
+st.write(os.listdir(DEFAULT_MODELS_DIR))
+
+st.write("Contenido data:")
+st.write(os.listdir(DEFAULT_DATA_DIR))
+
+import os
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 
