@@ -20,6 +20,23 @@ from sklearn.metrics import (
 )
 
 # ==========================================================
+# VERSIONES ESPERADAS PARA COMPATIBILIDAD CON LOS .PKL
+# ==========================================================
+EXPECTED_VERSIONS = {
+    "scikit-learn": "1.6.1",
+    "numpy": "2.0.2",
+    "pandas": "2.2.2",
+    "scipy": "1.16.3",
+}
+
+CURRENT_VERSIONS = {
+    "scikit-learn": __import__("sklearn").__version__,
+    "numpy": np.__version__,
+    "pandas": pd.__version__,
+    "scipy": __import__("scipy").__version__,
+}
+
+# ==========================================================
 # APP CONFIG
 # ==========================================================
 st.set_page_config(
@@ -144,6 +161,18 @@ def resolve_existing_path(*paths: Path) -> Optional[Path]:
         if p is not None and p.exists():
             return p
     return None
+
+
+def check_version_compatibility() -> List[str]:
+    warnings = []
+    for lib, expected in EXPECTED_VERSIONS.items():
+        current = CURRENT_VERSIONS.get(lib, "desconocida")
+        if current != expected:
+            warnings.append(
+                f"{lib}: instalada {current}, esperada {expected}. "
+                "Esto puede causar problemas al cargar el .pkl."
+            )
+    return warnings
 
 
 @st.cache_data(show_spinner=False)
@@ -431,7 +460,11 @@ def load_models(models_dir: str) -> Dict[str, object]:
             loaded[model_name] = load_joblib_obj(str(path))
             loaded[f"{model_name}__path"] = str(path)
         except Exception as e:
-            errors[model_name] = f"{type(e).__name__}: {e}"
+            errors[model_name] = (
+                f"{type(e).__name__}: {e}. "
+                "Revisa que el entorno tenga exactamente las versiones compatibles "
+                "con el entrenamiento del modelo."
+            )
 
     st.session_state["model_load_errors"] = errors
     return loaded
@@ -466,6 +499,23 @@ with st.sidebar:
     models_dir = st.text_input("Carpeta de modelos", models_dir_default)
     reference_data_path = st.text_input("Dataset de referencia", ref_path_default)
     st.caption("Se usa para validar columnas, tipos y rangos.")
+
+    st.markdown("### Versiones esperadas")
+    for lib, ver in EXPECTED_VERSIONS.items():
+        st.write(f"- {lib}: `{ver}`")
+
+    st.markdown("### Versiones instaladas")
+    for lib, ver in CURRENT_VERSIONS.items():
+        st.write(f"- {lib}: `{ver}`")
+
+    version_warnings = check_version_compatibility()
+    if version_warnings:
+        st.warning("Hay diferencias de versión que pueden afectar la lectura del .pkl.")
+        with st.expander("Ver detalle"):
+            for w in version_warnings:
+                st.write(f"- {w}")
+    else:
+        st.success("Las versiones instaladas coinciden con las esperadas.")
 
     if st.button("Recargar modelos"):
         st.cache_resource.clear()
@@ -1003,3 +1053,5 @@ st.markdown("### 📚 Información")
 st.markdown(f"**Modelos cargados:** {len([k for k in models.keys() if not k.endswith('__path')])}/4")
 st.markdown(f"**Variables:** {len(EXPECTED_FEATURES)}")
 st.markdown(f"**Carpeta de modelos actual:** `{models_dir}`")
+st.markdown("**Versiones esperadas para leer los .pkl:**")
+st.write(EXPECTED_VERSIONS)
