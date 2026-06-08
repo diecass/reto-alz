@@ -479,10 +479,11 @@ if "csv_issues" not in st.session_state:
         st.session_state["model_results"] = {}
 
 
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📁 Cargar CSV",
     "✍️ Captura manual",
     "🤖 Predicciones",
+    "👥 Grupos",
     "📊 Hallazgos",
 ])
 
@@ -622,7 +623,6 @@ with tab3:
             "Regresión logística",
             "Random Forest - GridSearch (pocos datos)",
             "Random Forest - RandomizedSearch (más datos)",
-            "Clustering",
         ] if m in models
     ]
 
@@ -798,43 +798,7 @@ with tab3:
                         "y_true": y_true,
                     }
 
-                # ==================================================
-                # CLUSTERING
-                # ==================================================
-                else:
-                    labels, viz = predict_cluster(model_obj, x_in)
-
-                    out = x_in.copy()
-                    out["Cluster"] = labels
-                    results_frames.append(out)
-
-                    c1, c2 = st.columns(2)
-                    c1.metric("Número de clusters detectados", int(pd.Series(labels).nunique()))
-                    c2.metric("Cluster más frecuente", int(pd.Series(labels).mode().iloc[0]))
-
-                    st.dataframe(out.head(50), use_container_width=True)
-
-                    counts = pd.Series(labels).value_counts().sort_index().reset_index()
-                    counts.columns = ["Cluster", "Cantidad"]
-                    fig_counts = px.bar(counts, x="Cluster", y="Cantidad", title="Tamaño de clusters")
-                    st.plotly_chart(fig_counts, use_container_width=True)
-
-                    if {"PC1", "PC2"}.issubset(viz.columns):
-                        fig_scatter = px.scatter(
-                            viz,
-                            x="PC1",
-                            y="PC2",
-                            color=viz["Cluster"].astype(str),
-                            title="Visualización PCA de los clusters",
-                            opacity=0.85,
-                        )
-                        st.plotly_chart(fig_scatter, use_container_width=True)
-
-                    st.session_state["model_results"][model_name] = {
-                        "kind": "cluster",
-                        "labels": labels,
-                    }
-
+                
             # ==================================================
             # COMPARACIÓN ENTRE LOS DOS RANDOM FOREST
             # ==================================================
@@ -886,8 +850,85 @@ with tab3:
                     use_container_width=True,
                 )
 
-
 with tab4:
+    st.subheader("Grupos")
+
+    st.markdown(
+        """
+        <div class="card">
+            <span class="badge">Clustering</span>
+            <span class="badge">Sin diagnóstico</span>
+            <span class="badge">Perfiles</span>
+            <p style="margin-top:0.8rem; margin-bottom:0;">
+                Esta pestaña quedó solo para grupos. El clustering se ejecuta únicamente con el CSV validado,
+                porque aquí sí se trabaja con una base completa y no con registros manuales o combinados.
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    cluster_source = st.radio(
+        "Fuente para grupos",
+        ["CSV validado", "Registros manuales", "Ambos"],
+        horizontal=True,
+        help="Para esta pestaña se usa solo CSV validado.",
+    )
+
+    run_cluster = st.button("Calcular grupos", type="primary", use_container_width=True)
+
+    if run_cluster:
+        if cluster_source != "CSV validado":
+            st.warning("El clustering solo se calcula con CSV validado. Con registros manuales o combinados no se ejecuta esta sección.")
+        elif "Clustering" not in models:
+            st.error("No se encontró el modelo de clustering en la carpeta de modelos.")
+        else:
+            csv_df = st.session_state.get("validated_csv")
+            if csv_df is None or len(csv_df) == 0:
+                st.error("Primero carga un CSV válido en la pestaña de carga.")
+            else:
+                x_in = to_model_input(csv_df)
+                model_obj = models["Clustering"]
+                labels, viz = predict_cluster(model_obj, x_in)
+
+                out = x_in.copy()
+                out["Cluster"] = labels
+
+                c1, c2 = st.columns(2)
+                c1.metric("Número de grupos detectados", int(pd.Series(labels).nunique()))
+                c2.metric("Grupo más frecuente", int(pd.Series(labels).mode().iloc[0]))
+
+                st.dataframe(out.head(50), use_container_width=True)
+
+                counts = pd.Series(labels).value_counts().sort_index().reset_index()
+                counts.columns = ["Cluster", "Cantidad"]
+                fig_pie = px.pie(counts, names="Cluster", values="Cantidad", title="Distribución de grupos")
+                st.plotly_chart(fig_pie, use_container_width=True)
+
+                if {"PC1", "PC2"}.issubset(viz.columns):
+                    fig_scatter = px.scatter(
+                        viz,
+                        x="PC1",
+                        y="PC2",
+                        color=viz["Cluster"].astype(str),
+                        title="Visualización PCA de los grupos",
+                        opacity=0.85,
+                    )
+                    st.plotly_chart(fig_scatter, use_container_width=True)
+
+                st.info(
+                    "El clustering no predice diagnóstico; agrupa pacientes con características similares. "
+                    "Esto permite explorar perfiles y patrones útiles para el socio formador."
+                )
+
+                st.session_state["model_results"]["Clustering"] = {
+                    "kind": "cluster",
+                    "labels": labels,
+                }
+    else:
+        st.info("Presiona 'Calcular grupos' para generar la salida de clustering.")
+
+with tab5:
     st.subheader("Hallazgos más relevantes")
 
     st.markdown(
