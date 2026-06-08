@@ -806,10 +806,6 @@ with tab4:
 
                 st.dataframe(out.head(50), use_container_width=True)
 
-                counts = pd.Series(labels).value_counts().sort_index().reset_index()
-                counts.columns = ["Cluster", "Cantidad"]
-                fig_pie = px.pie(counts, names="Cluster", values="Cantidad", title="Distribución de grupos")
-                st.plotly_chart(fig_pie, use_container_width=True)
 
                 if {"PC1", "PC2"}.issubset(viz.columns):
                     fig_scatter = px.scatter(
