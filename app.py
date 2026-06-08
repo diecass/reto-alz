@@ -1023,4 +1023,3 @@ with tab4:
             )
         else:
             st.warning("No fue posible calcular una comparación clínica real porque los datos cargados no contienen diagnóstico verdadero.")
-
