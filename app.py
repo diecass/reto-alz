@@ -56,7 +56,7 @@ st.markdown(
 
 RANDOM_STATE = 42
 
-BASE_DIR = Path(r"C:\Users\dieca\OneDrive\Documentos\streamlit-app-ml")
+BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_MODELS_DIR = BASE_DIR / "models"
 DEFAULT_DATA_DIR = BASE_DIR / "data"
 
