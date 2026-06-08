@@ -9,7 +9,18 @@ import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
 from sklearn.decomposition import PCA
+from sklearn.metrics import (
+    confusion_matrix,
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    roc_auc_score,
+)
 
+# ==========================================================
+# Configuración general
+# ==========================================================
 st.set_page_config(
     page_title="Alzheimer ML App",
     page_icon="🧠",
