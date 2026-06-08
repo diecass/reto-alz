@@ -894,24 +894,28 @@ with tab4:
 # TAB 5: Hallazgos (solo tablas y listas)
 # ==========================================================
 with tab5:
+    
     st.subheader("Hallazgos más relevantes")
-
     st.markdown(
         """
         <div class="card">
             <span class="badge">Interpretación automática</span>
-            <span class="badge">Tablas</span>
-            <span class="badge">Listas</span>
+            <span class="badge">Matriz de confusión</span>
+            <span class="badge">Sensibilidad priorizada</span>
             <p style="margin-top:0.8rem; margin-bottom:0;">
-                En esta pestaña se dejan solo tablas y listas, sin gráficas. Sirve como resumen ejecutivo.
+                Esta sección compara automáticamente los modelos ejecutados, priorizando la sensibilidad
+                para decidir cuál es el mejor en un contexto clínico.
             </p>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
+    from sklearn.metrics import confusion_matrix, accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
+
     results = st.session_state.get("model_results", {})
 
+    # --- Funciones auxiliares ---
     def compute_specificity(cm):
         tn, fp, fn, tp = cm.ravel()
         return tn / (tn + fp) if (tn + fp) > 0 else 0.0
@@ -930,123 +934,77 @@ with tab5:
                 auc = roc_auc_score(y_true, y_prob)
             except Exception:
                 auc = np.nan
+        return {"accuracy": acc, "precision": prec, "recall": rec, "specificity": spec, "f1": f1, "auc": auc, "cm": cm}
 
-        return {
-            "accuracy": acc,
-            "precision": prec,
-            "recall": rec,
-            "specificity": spec,
-            "f1": f1,
-            "auc": auc,
-            "cm": cm,
-        }
+    def interpret_supervised_model(model_name, metrics):
+        cm = metrics["cm"]
+        tn, fp, fn, tp = cm.ravel()
+        text = [f"**{model_name}**", f"Accuracy={metrics['accuracy']:.3f}, Precision={metrics['precision']:.3f}, Sensibilidad={metrics['recall']:.3f}, Especificidad={metrics['specificity']:.3f}, F1={metrics['f1']:.3f}" + (f", AUC={metrics['auc']:.3f}." if not np.isnan(metrics["auc"]) else ".")]
+        text.append(f"Matriz de confusión: TN={tn}, FP={fp}, FN={fn}, TP={tp}.")
+        text.append("El modelo prioriza la detección de positivos." if metrics["recall"] >= metrics["precision"] else "El modelo es conservador al etiquetar positivos.")
+        if fn < fp: text.append("Los falsos negativos son menores que los falsos positivos, útil en contexto médico.")
+        elif fn > fp: text.append("Hay más falsos negativos que falsos positivos; convendría ajustar el umbral.")
+        else: text.append("Los errores están equilibrados.")
+        return " ".join(text)
 
+    def plot_cm_heatmap(cm, title):
+        tn, fp, fn, tp = cm.ravel()
+        z = [[tn, fp], [fn, tp]]
+        fig = go.Figure(data=go.Heatmap(z=z, x=["Predicho 0", "Predicho 1"], y=["Real 0", "Real 1"], text=z, texttemplate="%{text}"))
+        fig.update_layout(title=title, xaxis_title="Predicción", yaxis_title="Valor real", height=450)
+        return fig
+
+    # --- Lógica principal supervisados ---
     supervised_rows = []
     supervised_available = False
 
     for model_name, info in results.items():
-        if info.get("kind") != "supervised":
-            continue
-
+        if info.get("kind") != "supervised": continue
         supervised_available = True
         y_pred = info.get("clinical_pred", info.get("preds"))
         y_prob = info.get("probs")
         y_true = info.get("y_true")
 
         if y_true is not None and len(y_true) == len(y_pred):
-            metrics = build_supervised_metrics(y_true, y_pred, y_prob)
-            supervised_rows.append({
-                "Modelo": model_name,
-                "Accuracy": metrics["accuracy"],
-                "Precision": metrics["precision"],
-                "Sensibilidad": metrics["recall"],
-                "Especificidad": metrics["specificity"],
-                "F1": metrics["f1"],
-                "AUC": metrics["auc"],
-            })
+            m = build_supervised_metrics(y_true, y_pred, y_prob)
+            supervised_rows.append({"Modelo": model_name, "Accuracy": m["accuracy"], "Precision": m["precision"], "Sensibilidad": m["recall"], "Especificidad": m["specificity"], "F1": m["f1"], "AUC": m["auc"]})
         else:
-            supervised_rows.append({
-                "Modelo": model_name,
-                "Accuracy": np.nan,
-                "Precision": np.nan,
-                "Sensibilidad": np.nan,
-                "Especificidad": np.nan,
-                "F1": np.nan,
-                "AUC": np.nan,
-            })
+            supervised_rows.append({"Modelo": model_name, "Accuracy": np.nan, "Precision": np.nan, "Sensibilidad": np.nan, "Especificidad": np.nan, "F1": np.nan, "AUC": np.nan})
 
     if supervised_available:
-        st.markdown("### Tabla de modelos supervisados")
+        st.markdown("### Comparación de modelos supervisados")
         df_supervised = pd.DataFrame(supervised_rows)
-        st.dataframe(
-            df_supervised.style.format({
-                "Accuracy": "{:.3f}",
-                "Precision": "{:.3f}",
-                "Sensibilidad": "{:.3f}",
-                "Especificidad": "{:.3f}",
-                "F1": "{:.3f}",
-                "AUC": "{:.3f}",
-            }),
-            use_container_width=True,
-        )
-
-        st.markdown("### Lista de lectura rápida")
         if df_supervised["Sensibilidad"].notna().any():
-            best_row = df_supervised.sort_values(
-                by=["Sensibilidad", "F1", "Especificidad", "Accuracy"],
-                ascending=False,
-            ).iloc[0]
-            st.write(
-                f"- Mejor modelo por sensibilidad: **{best_row['Modelo']}**."
-            )
-            st.write(
-                f"- Balance general: F1 = **{best_row['F1']:.3f}** y especificidad = **{best_row['Especificidad']:.3f}**."
-            )
-        else:
-            st.write("- No existe diagnóstico real en el conjunto evaluado, así que solo se muestran predicciones clínicas.")
-            st.write("- Para comparar con métricas reales, el archivo debe incluir la columna Diagnosis.")
-    else:
-        st.info("No se han ejecutado modelos supervisados todavía.")
+            df_supervised = df_supervised.sort_values(by=["Sensibilidad", "F1"], ascending=False)
+            st.dataframe(df_supervised.style.format("{:.3f}", subset=["Accuracy", "Precision", "Sensibilidad", "Especificidad", "F1", "AUC"]), use_container_width=True)
 
-    cluster_rows = []
+            metric_cols = [c for c in ["Precision", "Sensibilidad", "Especificidad", "F1", "Accuracy"] if c in df_supervised.columns]
+            plot_df = df_supervised.melt(id_vars="Modelo", value_vars=metric_cols, var_name="Métrica", value_name="Valor")
+            st.plotly_chart(px.bar(plot_df, x="Modelo", y="Valor", color="Métrica", barmode="group"), use_container_width=True)
+
+            # Interpretación individual
+            for _, row in df_supervised.iterrows():
+                m_name = row["Modelo"]
+                info = results[m_name]
+                st.subheader(m_name)
+                y_pred, y_true, y_prob = info.get("clinical_pred", info.get("preds")), info.get("y_true"), info.get("probs")
+                
+                if y_true is not None:
+                    m = build_supervised_metrics(y_true, y_pred, y_prob)
+                    c1, c2, c3, c4, c5 = st.columns(5)
+                    c1.metric("Acc", f"{m['accuracy']:.2f}"); c2.metric("Prec", f"{m['precision']:.2f}"); c3.metric("Sens", f"{m['recall']:.2f}"); c4.metric("Esp", f"{m['specificity']:.2f}"); c5.metric("F1", f"{m['f1']:.2f}")
+                    st.plotly_chart(plot_cm_heatmap(m["cm"], f"Matriz: {m_name}"), use_container_width=True)
+                    st.write(interpret_supervised_model(m_name, m))
+                st.markdown("---")
+        else:
+            st.warning("No hay etiquetas reales para comparar métricas.")
+    else:
+        st.info("No se han ejecutado modelos supervisados.")
+
+    # --- Clustering ---
     for model_name, info in results.items():
         if info.get("kind") == "cluster":
-            labels = info.get("labels")
-            counts = pd.Series(labels).value_counts().sort_index()
-            cluster_rows.append({
-                "Modelo": model_name,
-                "Clusters": int(len(counts)),
-                "Tamaño promedio": float(counts.mean()),
-                "Cluster más frecuente": int(counts.idxmax()),
-            })
-
-    if len(cluster_rows) > 0:
-        st.markdown("### Tabla de grupos")
-        st.dataframe(pd.DataFrame(cluster_rows), use_container_width=True, hide_index=True)
-
-        st.markdown("### Detalle de grupos")
-        for row in cluster_rows:
-            st.write(
-                f"- {row['Modelo']}: {row['Clusters']} grupos detectados, promedio de {row['Tamaño promedio']:.1f} pacientes por grupo, grupo más frecuente {row['Cluster más frecuente']}."
-            )
-    else:
-        st.info("Aún no se ha ejecutado la pestaña de grupos.")
-
-    st.markdown("### Conclusión ejecutiva")
-    if supervised_available and len(supervised_rows) > 0:
-        df_exec = pd.DataFrame(supervised_rows)
-
-        if df_exec["Sensibilidad"].notna().any():
-            best_exec = df_exec.sort_values(
-                by=["Sensibilidad", "F1", "Especificidad", "Accuracy"],
-                ascending=False,
-            ).iloc[0]
-            st.success(
-                f"En términos clínicos, el modelo más conveniente es **{best_exec['Modelo']}** porque prioriza la sensibilidad y mantiene un balance razonable con F1 = {best_exec['F1']:.3f}."
-            )
-        else:
-            st.warning(
-                "No fue posible calcular una comparación clínica real porque los datos cargados no contienen diagnóstico verdadero."
-            )
-    else:
-        st.warning("No hay resultados suficientes para generar una conclusión ejecutiva.")
+            st.markdown(f"### Clustering: {model_name}")
+            counts = pd.Series(info.get("labels")).value_counts().sort_index()
+            st.plotly_chart(px.pie(names=counts.index.astype(str), values=counts.values, title="Distribución de clusters"), use_container_width=True)
+            st.info("El clustering agrupa pacientes con características similares para explorar perfiles.")
