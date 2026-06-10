@@ -1219,6 +1219,8 @@ with tab5:
                 barmode="group",
                 title="Comparación de desempeño entre modelos supervisados",
                 color_discrete_sequence=["#1f77b4", "#ff7f0e", "#8c564b", "#2ca02c", "#9467bd", "#C8C952"] ,
+            )
+            
             st.plotly_chart(fig_metrics, use_container_width=True)
 
         if df_supervised["Sensibilidad"].notna().any():
