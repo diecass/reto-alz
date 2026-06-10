@@ -33,6 +33,11 @@ COLOR_SEQUENCE = [
 
 px.defaults.color_discrete_sequence = COLOR_SEQUENCE
 
+div.stButton > button:first-child {
+    background-color: "#2ca02c" 
+    color: white !important;
+}
+
 # ==========================================================
 # Configuración general
 # ==========================================================
