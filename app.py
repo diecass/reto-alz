@@ -24,7 +24,7 @@ COLOR_SEQUENCE = [
     "#1f77b4",  # azul
     "#ff7f0e",  # naranja
     "#2ca02c",  # verde
-    "#d62728",  # rojo
+    "#222781",  # rojo
     "#9467bd",  # morado
     "#8c564b",  # café
     "#17becf",  # turquesa
@@ -928,7 +928,7 @@ with tab3:
                             roc_fig = go.Figure()
                             fpr, tpr, _ = roc_curve(y_true, probs)
                             roc_fig.add_trace(go.Scatter(x=fpr, y=tpr, mode="lines", name=model_name, line=dict(color="#2563eb", width=3)))
-                            roc_fig.add_trace(go.Scatter(x=[0, 1], y=[0, 1], mode="lines", name="Aleatorio", line=dict(dash="dash", color="#64748b")))
+                            roc_fig.add_trace(go.Scatter(x=[0, 1], y=[0, 1], mode="lines", name="Aleatorio", line=dict(dash="dash", color="#143B74")))
                             roc_fig.update_layout(
                                 title=f"Curva ROC - {model_name}",
                                 xaxis_title="FPR",
