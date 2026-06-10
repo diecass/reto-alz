@@ -1024,7 +1024,7 @@ with tab3:
                         color="Métrica",
                         barmode="group",
                         title="Comparación entre los dos Random Forest",
-                        color_sequence=COLOR_SEQUENCE,
+                        color_discrete_sequence=COLOR_SEQUENCE,
                     )
                     st.plotly_chart(fig_cmp, use_container_width=True)
 
