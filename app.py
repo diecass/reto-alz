@@ -607,7 +607,7 @@ def plot_cluster_pca(viz: pd.DataFrame, centroids: Optional[pd.DataFrame] = None
         color=viz["Cluster"].astype(str),
         title="Visualización PCA de los grupos",
         opacity=0.82,
-        color_discrete_sequence=COLOR_SEQUENCE,
+        color_discrete_sequence=["#2563eb", "#60a5fa"],
     )
     if centroids is not None and len(centroids) > 0:
         fig.add_trace(
@@ -636,7 +636,7 @@ def plot_cluster_distribution(labels: np.ndarray) -> Tuple[go.Figure, pd.DataFra
         values="Cantidad",
         title="Distribución de grupos",
         color="Cluster",
-        color_discrete_sequence=COLOR_SEQUENCE,
+        color_discrete_sequence=["#2563eb", "#60a5fa"],
         hole=0.35,
     )
     return fig, counts
@@ -1025,7 +1025,7 @@ with tab3:
                         color="Métrica",
                         barmode="group",
                         title="Comparación entre los dos Random Forest",
-                        color_discrete_sequence=COLOR_SEQUENCE,
+                        color_discrete_sequence=["#2563eb", "#60a5fa"],
                     )
                     st.plotly_chart(fig_cmp, use_container_width=True)
 
@@ -1218,7 +1218,7 @@ with tab5:
                 color="Métrica",
                 barmode="group",
                 title="Comparación de desempeño entre modelos supervisados",
-                color_discrete_sequence=COLOR_SEQUENCE,
+                color_discrete_sequence=["#2563eb", "#60a5fa"],
             )
             st.plotly_chart(fig_metrics, use_container_width=True)
 
