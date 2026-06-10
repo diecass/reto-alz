@@ -18,6 +18,20 @@ from sklearn.metrics import (
     roc_auc_score,
     roc_curve,
 )
+import plotly.express as px
+
+COLOR_SEQUENCE = [
+    "#1f77b4",  # azul
+    "#ff7f0e",  # naranja
+    "#2ca02c",  # verde
+    "#d62728",  # rojo
+    "#9467bd",  # morado
+    "#8c564b",  # café
+    "#17becf",  # turquesa
+    "#e377c2",  # rosa fuerte
+]
+
+px.defaults.color_discrete_sequence = COLOR_SEQUENCE
 
 # ==========================================================
 # Configuración general
